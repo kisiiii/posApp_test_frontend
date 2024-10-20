@@ -1,126 +1,232 @@
 "use client";
-import { useState } from 'react';
-import BarcodeScanner from '../../components/BarcodeScanner';
+
+import { useState, useRef } from "react";
 
 export default function Home() {
-  const [product, setProduct] = useState(null);
-  const [message, setMessage] = useState('');
-  const [price, setPrice] = useState('');
+  const [barcode, setBarcode] = useState("");
+  const [productName, setProductName] = useState("");
+  const [price, setPrice] = useState("");
+  const [message, setMessage] = useState("");
   const [cart, setCart] = useState([]);
-  const [barcode, setBarcode] = useState('');
+  const [stream, setStream] = useState(null); // ストリームを保存するための状態
+  const videoRef = useRef(null);
 
-  //ボタンがクリックされたときに、カメラを起動してバーコードのスキャンを開始する
-  const handleScanClick = () => {
-    // ここでバーコードスキャンのためのカメラを起動するロジックを追加します
-    // スキャンされたバーコード、商品名、価格のシミュレーション
-    setBarcode('12345678901'); // 仮のバーコード
-    setProductName('おーいお茶'); // 仮の商品名
-    setPrice('150円'); // 仮の価格
-  };
-
-  //バーコードが検出された後、そのバーコード情報を使ってAPIを呼び出し、商品情報を取得する
-  const handleBarcodeDetected = async (barcode) => {
+  // カメラを起動して映像を表示
+  const handleScanClick = async () => {
     try {
-      const res = await fetch(`/api/products/${barcode}`); // バーコードを使ってAPIからデータを取得
-      const data = await res.json(); // APIから返ってきたデータをJSON形式に変換
-
-      if (res.status === 200) {
-        setProduct(data); // 商品が見つかった場合、商品情報を画面に表示
-        setMessage('');
-      } else {
-        setProduct(null); // 見つからなかった場合、メッセージを表示
-        setMessage('商品がマスタ未登録です');
-      }
-    } catch (error) {
-      console.error('Error fetching product:', error); // エラーがあった場合の処理
-      setMessage('商品データの取得に失敗しました');
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+      });
+      videoRef.current.srcObject = videoStream;
+      setStream(videoStream); // ストリームを保存
+    } catch (err) {
+      console.error("カメラの起動に失敗しました:", err);
+      setMessage("カメラの起動に失敗しました");
     }
   };
 
-  //スキャンされた商品を購入リストに追加し、その後入力フィールドをクリア
-  const handleAddClick = () => {
-    // 新しい商品を定義
-    const newProduct = { 
-      barcode,
-      productName,
-      price
-    };
-    // カートに商品を追加
-    setCart([...cart, newProduct]);
-     // フォームをクリア
-    setBarcode('');
-    setProductName('');
-    setPrice('');
+  // カメラのストリームを停止
+  const handleStopScanClick = () => {
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop()); // ストリームを停止
+      setStream(null); // ストリームをリセット
+      videoRef.current.srcObject = null; // カメラ映像を停止
+    }
   };
 
-  //購入完了のダミーロジックを実行します。ここでは、実際のAPI呼び出しを使って購入を確定する処理に置き換え
-  const handlePurchaseClick = () => {
-    // 購入を確定するロジックを追加します
-    alert('購入が完了しました！');
+  // 手動入力されたバーコードを使用して商品情報を取得
+  const handleBarcodeInput = async () => {
+    if (!barcode) {
+      setMessage("バーコードを入力してください");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/product/${barcode}`
+      );
+      const data = await response.json();
+
+      if (response.ok) {
+        setProductName(data.name);
+        setPrice(data.price);
+        setMessage("");
+      } else {
+        setMessage("商品が見つかりませんでした");
+      }
+    } catch (error) {
+      console.error("商品情報の取得に失敗しました:", error);
+      setMessage("商品情報の取得に失敗しました");
+    }
+  };
+
+  // カートに商品を追加
+  const handleAddToCart = () => {
+    if (!productName || !price) return;
+
+    const newProduct = {
+      name: productName,
+      price: price,
+      barcode: barcode,
+    };
+
+    setCart([...cart, newProduct]);
+
+    // 入力をクリア
+    setBarcode("");
+    setProductName("");
+    setPrice("");
+  };
+
+  // 合計金額計算
+  const calculateTotal = () => {
+    return cart.reduce((total, item) => total + Number(item.price), 0);
+  };
+
+  // 購入処理
+  const handlePurchaseClick = async () => {
+    const totalAmt = calculateTotal();
+    const totalAmtExTax = Math.round(totalAmt * 1.1); // 税込み金額を計算
+
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/purchase`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            cart, // 購入リストの商品情報
+            totalAmt, // 合計金額（税抜）
+            totalAmtExTax, // 合計金額（税込）
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (response.ok) {
+        alert(
+          `合計金額（税抜）: ${data.totalAmt}円\n合計金額（税込）: ${data.totalAmtExTax}円\n購入が完了しました！`
+        );
+        setCart([]); // 購入リストをリセット
+      } else {
+        setMessage("購入処理に失敗しました");
+      }
+    } catch (error) {
+      console.error("購入処理中にエラーが発生しました:", error);
+      setMessage("購入処理中にエラーが発生しました");
+    }
+  };
+
+  // 購入リストの表示
+  const renderCartItems = () => {
+    return cart.map((item, index) => (
+      <div
+        key={index}
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          marginBottom: "5px",
+        }}
+      >
+        <p>{item.name} x1</p>
+        <p>{item.price}円</p>
+      </div>
+    ));
   };
 
   return (
-    <div>
-      <div style={{ textAlign: 'center', padding: '20px', fontFamily: 'Arial, sans-serif' }}>
-      <button onClick={handleScanClick} style={buttonStyle}>
-        スキャン（カメラ）
-      </button>
+    <div style={{ padding: "20px", fontFamily: "Arial, sans-serif" }}>
+      {/* ①カメラスキャンボタン */}
+      <div style={{ textAlign: "center", marginBottom: "20px" }}>
+        <button onClick={handleScanClick} style={buttonStyle}>
+          スキャン（カメラ）
+        </button>
+        {/* カメラが起動している場合のみ停止ボタンを表示 */}
+        {stream && (
+          <button onClick={handleStopScanClick} style={buttonStyle}>
+            カメラを停止
+          </button>
+        )}
       </div>
 
-      <BarcodeScanner onDetected={handleBarcodeDetected} />
-      {product ? (
+      {/* カメラ映像の表示 */}
+      <div>
+        <video
+          ref={videoRef}
+          autoPlay
+          style={{ width: "100%", marginBottom: "20px" }}
+        />
+      </div>
+
+      {/* ②バーコード手入力フィールド */}
+      <input
+        type="text"
+        value={barcode}
+        onChange={(e) => setBarcode(e.target.value)}
+        placeholder="バーコードを手入力もできます"
+        style={inputStyle}
+      />
+
+      {/* ③商品取得ボタン */}
+      <button onClick={handleBarcodeInput} style={buttonStyle}>
+        商品を取得
+      </button>
+
+      {/* ④取得された商品情報の表示 */}
+      {productName && (
         <div>
-          <h2>商品情報</h2>
-          <p>名称: {product.name}</p>
-          <p>コード: {product.code}</p>
-          <p>単価: {product.price}</p>
+          <p>名称: {productName}</p>
+          <p>単価: {price}円</p>
         </div>
-      ) : (
-        <p>{message}</p>
       )}
 
-      <button onClick={handleAddClick} style={buttonStyle}>
+      {/* エラーメッセージの表示 */}
+      {message && <p>{message}</p>}
+
+      {/* ⑤購入リストへ追加ボタン */}
+      <button onClick={handleAddToCart} style={buttonStyle}>
         追加
       </button>
-      
-      <h3>購入リスト</h3>
-      <div style={listStyle}>
-        {cart.map((item, index) => (
-          <div key={index} style={{ marginBottom: '5px' }}>
-            {item.productName} x1 {item.price}
-          </div>
-        ))}
-      </div>
 
+      {/* ⑥購入品目リスト */}
+      <h3>購入リスト</h3>
+      <div style={listStyle}>{renderCartItems()}</div>
+
+      {/* ⑦購入ボタン */}
       <button onClick={handlePurchaseClick} style={buttonStyle}>
         購入
       </button>
-
     </div>
   );
 }
 
+// ボタンのスタイル
 const buttonStyle = {
-  backgroundColor: '#ADD8E6',
-  padding: '10px 20px',
-  margin: '10px 0',
-  border: 'none',
-  cursor: 'pointer',
-  fontSize: '16px'
+  backgroundColor: "#ADD8E6",
+  padding: "10px 20px",
+  margin: "10px 0",
+  border: "none",
+  cursor: "pointer",
+  fontSize: "16px",
+  width: "100%",
 };
 
+// 入力フィールドのスタイル
 const inputStyle = {
-  border: '1px solid #ccc',
-  padding: '10px',
-  margin: '10px 0',
-  width: '200px',
-  display: 'inline-block'
+  border: "1px solid #ccc",
+  padding: "10px",
+  margin: "10px 0",
+  width: "100%",
+  display: "block",
 };
 
+// リストのスタイル
 const listStyle = {
-  border: '1px solid #ccc',
-  padding: '10px',
-  width: '300px',
-  margin: '10px auto',
-  textAlign: 'left'
+  border: "1px solid #ccc",
+  padding: "10px",
+  margin: "10px 0",
+  width: "100%",
 };
